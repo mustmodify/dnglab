@@ -165,10 +165,18 @@ impl RawDevelop {
   /// If demosaic is disabled or camera raw is monochrome, the TIFF
   /// has only one color channel.
   pub fn develop_intermediate(&self, rawimage: &RawImage) -> crate::Result<Intermediate> {
+    self.develop_intermediate_cancellable(rawimage, &crate::cancel::CancellationToken::new())
+  }
+
+  /// Develop with cooperative cancellation between expensive processing
+  /// stages. Individual operators may additionally provide internal checks.
+  pub fn develop_intermediate_cancellable(&self, rawimage: &RawImage, cancellation: &crate::cancel::CancellationToken) -> crate::Result<Intermediate> {
+    cancellation.check()?;
     let mut rawimage = rawimage.clone();
     if self.steps.contains(&ProcessingStep::Rescale) {
       rawimage.apply_scaling()?;
     }
+    cancellation.check()?;
 
     let mut intermediate = match rawimage.cpp {
       1 => Intermediate::Monochrome(PixF32::new_with(rawimage.data.as_f32().into_owned(), rawimage.width, rawimage.height)),
@@ -184,6 +192,7 @@ impl RawDevelop {
       )),
       _ => todo!(),
     };
+    cancellation.check()?;
 
     if self.steps.contains(&ProcessingStep::Demosaic) {
       intermediate = match &rawimage.photometric {
@@ -226,6 +235,7 @@ impl RawDevelop {
         _ => intermediate,
       };
     }
+    cancellation.check()?;
 
     if self.steps.contains(&ProcessingStep::Calibrate) {
       let mut xyz2cam: [[f32; 3]; 4] = [[0.0; 3]; 4];
@@ -284,6 +294,7 @@ impl RawDevelop {
         Intermediate::FourColor(pixels) => Intermediate::ThreeColor(map_4ch_to_rgb(&pixels, &wb, xyz2cam)),
       };
     }
+    cancellation.check()?;
 
     if self.steps.contains(&ProcessingStep::CropDefault) {
       log::debug!("ProcessingStep: CropDefault");
@@ -314,6 +325,7 @@ impl RawDevelop {
         }
       }
     }
+    cancellation.check()?;
 
     if self.steps.contains(&ProcessingStep::SRgb) {
       match &mut intermediate {
@@ -322,6 +334,7 @@ impl RawDevelop {
         Intermediate::FourColor(pixels) => pixels.for_each(super::srgb::srgb_apply_gamma_n),
       };
     }
+    cancellation.check()?;
 
     Ok(intermediate)
   }

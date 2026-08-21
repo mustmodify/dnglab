@@ -417,7 +417,11 @@ impl<'mdat> BandParam<'mdat> {
 
 /// Decompress a MDAT image buffer by given CMP1 box parameters
 pub fn decompress_crx_image(buf: &[u8], cmp1: &Cmp1Box) -> Result<Vec<u16>> {
+  decompress_crx_image_cancellable(buf, cmp1, &crate::cancel::CancellationToken::new())
+}
+
+pub fn decompress_crx_image_cancellable(buf: &[u8], cmp1: &Cmp1Box, cancellation: &crate::cancel::CancellationToken) -> Result<Vec<u16>> {
   let image = CodecParams::new(cmp1)?;
   debug!("CRX codec parameter: {:?}", image);
-  image.decode(buf)
+  image.decode(buf, cancellation)
 }

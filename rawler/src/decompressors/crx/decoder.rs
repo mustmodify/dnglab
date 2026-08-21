@@ -163,13 +163,22 @@ impl CodecParams {
   ///
   /// Decoding processes all planes in all tiles and assembles the
   /// decoded planes into proper tile output position and CFA pattern.
-  pub fn decode(mut self, mdat: &[u8]) -> Result<Vec<u16>> {
+  pub fn decode(mut self, mdat: &[u8], cancellation: &crate::cancel::CancellationToken) -> Result<Vec<u16>> {
+    let check_cancelled = || {
+      if cancellation.is_cancelled() {
+        Err(CrxError::General("decode cancelled".into()))
+      } else {
+        Ok(())
+      }
+    };
+    check_cancelled()?;
     let instant = Instant::now();
     debug!("Tile configuration: rows: {}, columns: {}", self.tile_rows, self.tile_cols);
     // Build nested Tiles/Planes/Bands
     let mut tiles = parse_header(self.get_header(mdat))?;
     self.process_tiles(&mut tiles);
     for tile in tiles.iter_mut() {
+      check_cancelled()?;
       tile.generate_qstep_table(&self, self.get_data(mdat))?;
     }
 
@@ -180,7 +189,18 @@ impl CodecParams {
     // and decode the full planes.
     let plane_bufs: Result<Vec<Vec<Vec<PlaneLine>>>> = tiles
       .par_iter()
-      .map(|tile| tile.planes.par_iter().map(move |plane| decode_full_plane(&self, tile, plane, mdat)).collect())
+      .map(|tile| {
+        tile
+          .planes
+          .par_iter()
+          .map(|plane| {
+            check_cancelled()?;
+            let decoded = decode_full_plane(&self, tile, plane, mdat)?;
+            check_cancelled()?;
+            Ok(decoded)
+          })
+          .collect()
+      })
       .collect();
 
     // Now we have a list of tiles->planes->plane-lines
@@ -188,6 +208,7 @@ impl CodecParams {
     match plane_bufs {
       Ok(bufs) => {
         for (tile_id, tile) in bufs.into_iter().enumerate() {
+          check_cancelled()?;
           let plane_count = tile.len();
           debug_assert_eq!(plane_count, 4);
           // Convert vector of planes to excact count of 4 planes - or fail
@@ -198,6 +219,9 @@ impl CodecParams {
           let (p0, p1, p2, p3) = (&planes[0], &planes[1], &planes[2], &planes[3]);
           // Process each PlaneLine in all 4 buffers
           for (plane_row, (l0, l1, l2, l3)) in izip!(p0, p1, p2, p3).enumerate() {
+            if plane_row % 32 == 0 {
+              check_cancelled()?;
+            }
             let (c0, c1, c2, c3) = convert_plane_line(&self, l0, l1, l2, l3)?;
             integrate_cfa(&self, &tiles, &mut cfa, tile_id, 0, plane_row, &c0)?;
             integrate_cfa(&self, &tiles, &mut cfa, tile_id, 1, plane_row, &c1)?;

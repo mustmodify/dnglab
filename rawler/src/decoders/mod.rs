@@ -330,6 +330,21 @@ impl RawMetadata {
 pub trait Decoder: Send {
   fn raw_image(&self, file: &RawSource, params: &RawDecodeParams, dummy: bool) -> Result<RawImage>;
 
+  /// Decode with cooperative cancellation. Decoders that do not yet expose
+  /// internal checkpoints still observe cancellation at their API boundary.
+  fn raw_image_cancellable(
+    &self,
+    file: &RawSource,
+    params: &RawDecodeParams,
+    dummy: bool,
+    cancellation: &crate::cancel::CancellationToken,
+  ) -> Result<RawImage> {
+    cancellation.check()?;
+    let image = self.raw_image(file, params, dummy)?;
+    cancellation.check()?;
+    Ok(image)
+  }
+
   fn raw_image_count(&self) -> Result<usize> {
     Ok(1)
   }

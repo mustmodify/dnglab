@@ -74,6 +74,7 @@ pub mod analyze;
 pub mod bitarray;
 pub mod bits;
 pub mod buffer;
+pub mod cancel;
 pub mod cfa;
 pub mod decoders;
 pub mod decompressors;

@@ -9,7 +9,7 @@ use std::fmt::Debug;
 
 use crate::bits::Endian;
 use crate::decoders::*;
-use crate::decompressors::crx::decompress_crx_image;
+use crate::decompressors::crx::decompress_crx_image_cancellable;
 use crate::envparams::{rawler_crx_raw_trak, rawler_ignore_previews};
 use crate::exif::ExifGPS;
 use crate::formats::bmff::FileBox;
@@ -254,6 +254,17 @@ impl<'a> Decoder for Cr3Decoder<'a> {
 
   /// Decode raw image
   fn raw_image(&self, file: &RawSource, params: &RawDecodeParams, dummy: bool) -> Result<RawImage> {
+    self.raw_image_cancellable(file, params, dummy, &crate::cancel::CancellationToken::new())
+  }
+
+  fn raw_image_cancellable(
+    &self,
+    file: &RawSource,
+    params: &RawDecodeParams,
+    dummy: bool,
+    cancellation: &crate::cancel::CancellationToken,
+  ) -> Result<RawImage> {
+    cancellation.check()?;
     let sample_idx = params.image_index;
     if sample_idx >= self.raw_image_count()? {
       return Err(RawlerError::DecoderFailed(format!(
@@ -313,7 +324,7 @@ impl<'a> Decoder for Cr3Decoder<'a> {
 
     let image = if !dummy {
       PixU16::new_with(
-        decompress_crx_image(buf, cmp1).map_err(|e| format!("Failed to decode raw: {}", e))?,
+        decompress_crx_image_cancellable(buf, cmp1, cancellation).map_err(|e| format!("Failed to decode raw: {}", e))?,
         cmp1.f_width as usize,
         cmp1.f_height as usize,
       )
@@ -321,6 +332,7 @@ impl<'a> Decoder for Cr3Decoder<'a> {
       PixU16::new_uninit(cmp1.f_width as usize, cmp1.f_height as usize)
     };
 
+    cancellation.check()?;
     let cpp = 1;
     let blacklevel = cr3md
       .blacklevels
