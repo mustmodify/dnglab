@@ -79,6 +79,10 @@ pub enum CrxError {
   /// Error on internal cursor type
   #[error("I/O error")]
   Io(#[from] std::io::Error),
+
+  /// The caller's cancellation token was set while decoding
+  #[error("Decode cancelled")]
+  Cancelled,
 }
 
 /// Result type for Compressor results

@@ -125,6 +125,11 @@ pub enum RawlerError {
 
   #[error("Failed to decode image, possibly corrupt image: {}", _0)]
   DecoderFailed(String),
+
+  /// The decode stopped because the caller's `CancellationToken` was set.
+  /// It says nothing against the file.
+  #[error("The decode was cancelled")]
+  Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, RawlerError>;

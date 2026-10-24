@@ -29,11 +29,12 @@ struct PlaneLineIter<'a> {
   iwt_transforms: Vec<WaveletTransform>,
   //plane_buf: Vec<i32>,
   next_row: usize,
+  cancellation: &'a crate::cancel::CancellationToken,
 }
 
 impl<'a> PlaneLineIter<'a> {
   /// Create a new PlaneLine iterator for decoding
-  fn new(codec: CodecParams, tile: &'a Tile, plane: &'a Plane, mdat: &'a [u8]) -> Result<Self> {
+  fn new(codec: CodecParams, tile: &'a Tile, plane: &'a Plane, mdat: &'a [u8], cancellation: &'a crate::cancel::CancellationToken) -> Result<Self> {
     // Some checks for correct input
     assert!(tile.plane_height > 0);
     assert!(tile.plane_width > 0);
@@ -95,6 +96,7 @@ impl<'a> PlaneLineIter<'a> {
       codec,
       iwt_transforms,
       next_row: 0,
+      cancellation,
     })
   }
 
@@ -133,6 +135,11 @@ impl<'a> Iterator for PlaneLineIter<'a> {
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.next_row < self.tile.plane_height {
+      // One relaxed-cost atomic load per decoded line: a plane that is already
+      // running stops within a line of the flag being set, not at its end.
+      if self.cancellation.is_cancelled() {
+        return Some(Err(CrxError::Cancelled));
+      }
       match self.decode_plane_line() {
         Ok(line) => Some(Ok(line.into())),
         Err(e) => Some(Err(e)),
@@ -152,9 +159,15 @@ type PlaneLine = Vec<i32>;
 
 /// Wrapper for PlaneLineIter
 /// Decodes a complete plane and returns it as vector of lines
-fn decode_full_plane(codec: &CodecParams, tile: &Tile, plane: &Plane, mdat: &[u8]) -> Result<Vec<PlaneLine>> {
+fn decode_full_plane(
+  codec: &CodecParams,
+  tile: &Tile,
+  plane: &Plane,
+  mdat: &[u8],
+  cancellation: &crate::cancel::CancellationToken,
+) -> Result<Vec<PlaneLine>> {
   //eprintln!("Process tile {}, plane: {}", tile.id, plane.id);
-  let line_decoder = PlaneLineIter::new(*codec, tile, plane, mdat)?;
+  let line_decoder = PlaneLineIter::new(*codec, tile, plane, mdat, cancellation)?;
   line_decoder.collect()
 }
 
@@ -166,7 +179,7 @@ impl CodecParams {
   pub fn decode(mut self, mdat: &[u8], cancellation: &crate::cancel::CancellationToken) -> Result<Vec<u16>> {
     let check_cancelled = || {
       if cancellation.is_cancelled() {
-        Err(CrxError::General("decode cancelled".into()))
+        Err(CrxError::Cancelled)
       } else {
         Ok(())
       }
@@ -195,7 +208,7 @@ impl CodecParams {
           .par_iter()
           .map(|plane| {
             check_cancelled()?;
-            let decoded = decode_full_plane(&self, tile, plane, mdat)?;
+            let decoded = decode_full_plane(&self, tile, plane, mdat, cancellation)?;
             check_cancelled()?;
             Ok(decoded)
           })

@@ -28,7 +28,7 @@ impl CancellationToken {
 
   pub fn check(&self) -> Result<()> {
     if self.is_cancelled() {
-      Err(RawlerError::DecoderFailed("decode cancelled".into()))
+      Err(RawlerError::Cancelled)
     } else {
       Ok(())
     }

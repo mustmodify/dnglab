@@ -9,7 +9,7 @@ use std::fmt::Debug;
 
 use crate::bits::Endian;
 use crate::decoders::*;
-use crate::decompressors::crx::decompress_crx_image_cancellable;
+use crate::decompressors::crx::{CrxError, decompress_crx_image_cancellable};
 use crate::envparams::{rawler_crx_raw_trak, rawler_ignore_previews};
 use crate::exif::ExifGPS;
 use crate::formats::bmff::FileBox;
@@ -324,7 +324,10 @@ impl<'a> Decoder for Cr3Decoder<'a> {
 
     let image = if !dummy {
       PixU16::new_with(
-        decompress_crx_image_cancellable(buf, cmp1, cancellation).map_err(|e| format!("Failed to decode raw: {}", e))?,
+        decompress_crx_image_cancellable(buf, cmp1, cancellation).map_err(|e| match e {
+          CrxError::Cancelled => RawlerError::Cancelled,
+          e => RawlerError::DecoderFailed(format!("Failed to decode raw: {}", e)),
+        })?,
         cmp1.f_width as usize,
         cmp1.f_height as usize,
       )
