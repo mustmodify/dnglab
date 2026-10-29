@@ -219,7 +219,14 @@ impl<'a> DngDecoder<'a> {
         !subsampled && (compression == 7 || compression == 8 || compression == 1 || compression == 0x884c || compression == 52546)
       })
       .collect::<Vec<&IFD>>();
-    if let Some(first) = ifds.first() {
+    // The full-size image, not a reduced one that slipped the filter: the largest of the candidates (the first when
+    // they are the same size).
+    let area = |ifd: &&IFD| {
+      let dim = |t: TiffCommonTag| ifd.get_entry(t).map(|e| e.force_usize(0)).unwrap_or(0);
+      dim(TiffCommonTag::ImageWidth).saturating_mul(dim(TiffCommonTag::ImageLength))
+    };
+    let largest = ifds.iter().copied().reduce(|best, ifd| if area(&ifd) > area(&best) { ifd } else { best });
+    if let Some(first) = largest {
       Ok(first)
     } else {
       Err(RawlerError::DecoderFailed(format!("TODO: Unsupported DNG compression")))

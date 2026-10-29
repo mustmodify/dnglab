@@ -606,6 +606,7 @@ pub(crate) fn dynamic_image_from_ifd(ifd: &IFD, rawsource: &RawSource) -> Result
 /// | `Uint` (u16)  | JPEG-XL                        | Strips / Tiles |
 /// | `IEEEFP` (f32)| None                           | Strips / Tiles |
 /// | `IEEEFP` (f32)| Deflate                        | Tiles          |
+/// | `IEEEFP` (f32)| JPEG-XL                        | Strips / Tiles |
 ///
 /// All other combinations return an error.
 ///
@@ -704,6 +705,9 @@ pub fn plain_image_from_ifd(ifd: &IFD, rawsource: &RawSource) -> Result<RawImage
           let predictor = fetch_tiff_tag!(ifd, TiffCommonTag::Predictor).force_u16(0);
           decode_tiles::<f32>(rawsource, ifd, DeflateDecompressor::new(cpp, predictor, bits), dummy)?
         }
+        // Lightroom's HDR DNGs: half-float JPEG-XL tiles, decoded to scene-linear f32 in the declared colour space.
+        (CompressionMethod::JPEGXL, DataMode::Tiles) => decode_tiles::<f32>(rawsource, ifd, JpegXLDecompressor::new(bits), dummy)?,
+        (CompressionMethod::JPEGXL, DataMode::Strips) => decode_strips::<f32>(rawsource, ifd, JpegXLDecompressor::new(bits), dummy)?,
         _ => {
           return Err(RawlerError::DecoderFailed(format!(
             "Unsupported compression method: {:?}, storage: {:?}",
