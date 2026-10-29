@@ -157,18 +157,28 @@ impl<'a> Iterator for PlaneLineIter<'a> {
 /// A plane line is a vector if i32 values
 type PlaneLine = Vec<i32>;
 
-/// Wrapper for PlaneLineIter
-/// Decodes a complete plane and returns it as vector of lines
+/// Decodes a complete plane into one flat buffer, line after line (`plane_width` values each).
+///
+/// One allocation for the plane, not one per line: an R5's four planes were ~11,000 small vectors, and freeing them
+/// after the CFA was built took ~250 ms on Windows (a third of the whole decode), during which a cancellation could not
+/// be seen. The cancellation is looked at before every line, as the line iterator does.
 fn decode_full_plane(
   codec: &CodecParams,
   tile: &Tile,
   plane: &Plane,
   mdat: &[u8],
   cancellation: &crate::cancel::CancellationToken,
-) -> Result<Vec<PlaneLine>> {
+) -> Result<Vec<i32>> {
   //eprintln!("Process tile {}, plane: {}", tile.id, plane.id);
-  let line_decoder = PlaneLineIter::new(*codec, tile, plane, mdat, cancellation)?;
-  line_decoder.collect()
+  let mut line_decoder = PlaneLineIter::new(*codec, tile, plane, mdat, cancellation)?;
+  let mut flat: Vec<i32> = Vec::with_capacity(tile.plane_width * tile.plane_height);
+  while line_decoder.next_row < tile.plane_height {
+    if cancellation.is_cancelled() {
+      return Err(CrxError::Cancelled);
+    }
+    flat.extend_from_slice(line_decoder.decode_plane_line()?);
+  }
+  Ok(flat)
 }
 
 impl CodecParams {
@@ -200,7 +210,7 @@ impl CodecParams {
 
     // Combine all tiles and planes into parallel iterators
     // and decode the full planes.
-    let plane_bufs: Result<Vec<Vec<Vec<PlaneLine>>>> = tiles
+    let plane_bufs: Result<Vec<Vec<Vec<i32>>>> = tiles
       .par_iter()
       .map(|tile| {
         tile
@@ -225,13 +235,14 @@ impl CodecParams {
           let plane_count = tile.len();
           debug_assert_eq!(plane_count, 4);
           // Convert vector of planes to excact count of 4 planes - or fail
-          let planes: [Vec<PlaneLine>; 4] = tile
+          let planes: [Vec<i32>; 4] = tile
             .try_into()
             .map_err(|_| CrxError::General(format!("Invalid plane count {} (expected 4) for tile {}", plane_count, tile_id)))?;
           // References to all 4 plane buffers
           let (p0, p1, p2, p3) = (&planes[0], &planes[1], &planes[2], &planes[3]);
-          // Process each PlaneLine in all 4 buffers
-          for (plane_row, (l0, l1, l2, l3)) in izip!(p0, p1, p2, p3).enumerate() {
+          // Process each line of all 4 planes
+          let width = tiles[tile_id].plane_width.max(1);
+          for (plane_row, (l0, l1, l2, l3)) in izip!(p0.chunks_exact(width), p1.chunks_exact(width), p2.chunks_exact(width), p3.chunks_exact(width)).enumerate() {
             if plane_row % 32 == 0 {
               check_cancelled()?;
             }
